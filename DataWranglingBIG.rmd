@@ -1,0 +1,438 @@
+---
+title: "MATH2349 Data Wrangling"
+author: "Georgia Cross S3871131"
+subtitle: Assignment 2
+output:
+  pdf_document: default
+  html_notebook: default
+  html_document:
+    df_print: paged
+---
+
+
+## Required packages 
+
+
+Provide the packages required to reproduce the report. Make sure you fulfilled the minimum requirement #10.
+
+```{r, warning=FALSE, results = FALSE}
+library(ggplot2) 
+library(dplyr)  
+library(knitr) 
+library(readr)
+library(magrittr)
+library(lubridate)
+library(systemfonts)
+library(tidyr)
+library(tidyverse)
+library(car)
+require(reshape2)
+library(outliers)
+```
+
+
+## Executive Summary 
+
+
+In your own words, provide a brief summary of the preprocessing. Explain the steps that you have taken to preprocess your data. Write this section last after you have performed all data preprocessing. (Word count Max: 300 words)
+
+
+## Data Sources and Variables 
+
+A clear description of data sets, their sources, and variable descriptions should be provided. In this section, you must also provide the R codes with outputs (head of data sets) that you used to import/read/scrape the data set. You need to fulfil the minimum requirement #1 and merge at least two data sets to create the one you are going to work on. In addition to the R codes and outputs, you need to explain the steps that you have taken.
+
+### Dataset One
+
+The first of the two data sets I scraped came from the broadway league website below. 
+
+https://www.broadwayleague.com/research/grosses-broadway-nyc/  
+
+I created a csv using python code found here 
+
+https://github.com/geobcross/broadwaywebscrape/blob/main/DataWrangling%20Assignment.ipynb
+
+and then downloaded that csv to my local machine.
+
+I first read in the data using readr package
+```{r, warning = FALSE}
+data <- read_csv('broadwaydata.csv')
+```
+
+```{r}
+head(data)
+```
+### Variabe Descriptions
+
+X1: Index number  
+Week End: The date of the end of the seven day week being recorded   
+Show: The name of the Show   
+Type: Whether it is a Play or a Musical  
+Theatre: The theatre in which the performance was played   
+Prev: the number of preview performances performed that week   
+Perf: The number of official performances that week   
+Grosses: Net Grosses in the week specified  
+GrossesPrev Week: Net Grosses in the week prior to the specified week  
+GG%GP: Percentage of grosses that was Gross Profit   
+Attend: The number of paid attendies in the specified week   
+AttendPrev Week: The number of paid attendies in the week prior to the specified week  
+% Cap: The percentage of tickets sold based on the theatre's capacity
+
+
+
+### Dataset Two
+
+The second data frame I created using information from the site below. 
+
+https://www.ibdb.com 
+
+First I took all the names of the shows currently on Broadway. Below, examples are highlighted in pink. 
+
+![](all_shows.jpg){#id .class width=50% height=25%}
+
+When you click on each image it takes you to a page with further information about the show. The information I took was the data pertaining to the opening night of the show. Below is a screenshot of what the site looks like and the information I was interested in is circled in pink. 
+
+![](opening_night.jpg){#id .class width=50% height=25%}
+
+
+I used a python scraping method to produce the csv file. 
+
+The link to my webscraping can be found at the link below.  
+
+https://github.com/geobcross/broadwaywebscrape/blob/main/DataWrangling%20Assignment.ipynb  
+
+I downloaded the csv file to my local computer and then read in using the readr function 
+```{r}
+openings <- read_csv('opening_nights.csv')
+```
+
+```{r}
+head(openings)
+```
+
+### Variabe Descriptions
+
+X1: Index number  
+Title: The name of the Show   
+opening_night: The first official opening night of the show 
+
+
+
+
+## Understand 
+
+Summarise the types of variables and data structures, check the attributes in the data and apply proper data type conversions. In addition to the R codes and outputs, explain briefly the steps that you have taken. In this section, show that you have fulfilled minimum requirements 2-4.
+
+### Dataset Two 
+```{r}
+str(data)
+```
+
+
+I needed to change the type for a number of the columns to enable us to apply the calculations we were interested in 
+```{r}
+data$`Week End` <- data$`Week End` %>% mdy()
+data$Show <- data$Show  %>% str_to_title()
+data$Type <- data$Type %>% factor(levels = c("Play", "Musical"))
+data$`GG%GP` <- data$`GG%GP` %>%  str_remove_all("%") %>% as.numeric() 
+data$`% Cap` <- data$`% Cap` %>%  str_remove_all("%") 
+data$`% Cap` <- data$`% Cap` %>% as.numeric() 
+data$Grosses <- data$Grosses %>% str_remove_all("[$,]") 
+data$Grosses <- data$Grosses %>% as.numeric()
+data$`GrossesPrev Week` <- data$`GrossesPrev Week` %>%  str_remove_all("[$,]") %>% as.numeric() 
+```
+
+```{r}
+head(data)
+```
+
+### Dataset Two 
+```{r}
+str(openings)
+```
+
+The opening night dates are a string so we need to change to date format 
+
+
+```{r}
+openings$opening_night <- openings$opening_night %>% str_remove_all(",")
+openings <- openings %>% separate(opening_night, into = c("Month", "Day", "Year"), sep = " ")
+openings$Month[openings$Month== "Never"] <- NA
+openings$Day[openings$Day== "Officially"] <- NA
+openings$Year[openings$Year== "Opened"] <- NA
+```
+
+
+```{r}
+openings$Month <- match(openings$Month,month.abb)
+openings <- openings %>% unite(opening_night, Month, Day, Year ,sep="-")
+openings$opening_night[openings$opening_night== "NA-NA-NA"] <- NA
+openings$opening_night <- openings$opening_night %>% mdy()
+```
+
+```{r}
+head(openings)
+```
+
+
+## COMBINING THE DATA SETS 
+
+to avoid for string discrepencies I converted both Title/Show columns to upper case 
+
+```{r}
+openings$Title <- toupper(openings$Title)
+```
+```{r}
+data$Show <- toupper(data$Show)
+```
+
+
+I initially tried a left_join but what I noticed here is that I lost the data from shows that were named slightly differently for example I do have the opening date of WEST SIDE STORY it is just named WEST SIDE STORY 2020 in my other data set. 
+
+So instead I have done a full join in order to look for titles that are similar enough for us to determine that they are infact equal. 
+```{r}
+big_set1 <- data %>% full_join(openings, c("Show" = "Title"))
+```
+
+
+I took this big data frame that I had created and I selected rows where "Type", a variable from the first table was NA in our combined data set. The output below suggests that COMPANY,HOW I LEARNED TO DRIVE, MRS. DOUBTFIRE, SING STREET, TINA and WEST SIDE STORY exist in our opening night set but not our grosses data set.
+
+```{r}
+big_set3 <- big_set1 %>% filter(is.na(Type)== TRUE) %>% select(Show, opening_night)
+big_set3
+```
+Then from the same combined data set (big_set1) I selected rows where opening_night was NA. From this we can see that WEST SIDE 2020 and TINA - THE TINA TURNER MUSICAL seem to have an NA opening night result however they both occur with slightly different names in the data set above. Company also appeared in the below data set twice only with a slightly different name. 
+
+```{r}
+big_set2 <- big_set1 %>% filter(is.na(opening_night)== TRUE) %>% select(Show, opening_night)
+big_set2 %>% arrange(Show)
+```
+
+So I changed the values manually. 
+
+```{r}
+data$Show[data$Show== "COMPANY 2020"] <- "COMPANY"
+data$Show[data$Show== "TINA - THE TINA TURNER MUSICAL"] <- "TINA"
+data$Show[data$Show== "WEST SIDE STORY 2020"] <- "WEST SIDE STORY"
+```
+
+
+
+```{r}
+data$Show
+```
+
+Once those values in the Show column were fixed I decided to do a left join to keep only the values in my opening_night table that also corresponded with a value in the newly cleaned grosses data table.  
+
+```{r}
+big_set1 <- data %>% left_join(openings, c("Show" = "Title"))
+big_set1
+```
+To keep things clean I renamed the variable 
+```{r}
+data <- big_set1
+```
+
+
+
+
+## TWO WEEKS WORTH OF DATA 
+
+As the dataframe includes two weeks worth of values for grosses and attendance but in seperate columns I decided to create a new table that included the grosses and attendance from the week of (week described by column "Week ending") as well as grosses and attendance for the week prior, the values of which were found in columns "GrossesPrev Week" and "AttendPrev Week". 
+
+
+Although a gather function seems a likely option due to the nature of transformation being from wide to long format, it would result in an inaccurate data table. Instead of using the **gather()** function to tidy my data set I used a combination of sub-setting functions 
+
+
+
+### Two weeks worth of Plays 
+```{r}
+Plays <- data[data$Type == "Play",]
+Musicals <- data[data$Type == "Musical",]
+
+a <- Plays %>% select( -(c(`GrossesPrev Week`,`AttendPrev Week`)))
+b <- Plays %>% select(`Week End`, Show, Type, Theatre, `GrossesPrev Week`,`AttendPrev Week`,opening_night)
+colnames(b)
+```
+
+
+
+```{r}
+b$`Week End`[b$`Week End`== "2020-03-08"] <- "2020-03-01"
+```
+
+```{r}
+b
+```
+
+
+
+```{r}
+names(b)[names(b) == "GrossesPrev Week"] <- "Grosses"
+names(b)[names(b) == "AttendPrev Week"] <- "Attend"
+colnames(b)
+twpg <- bind_rows(a,b)
+twpg
+```
+
+
+### Two weeks worth of Musicals 
+```{r}
+c <- Musicals %>% select( -(c(`GrossesPrev Week`,`AttendPrev Week`)))
+d <- Musicals %>% select(`Week End`, Show, Type, Theatre, `GrossesPrev Week`,`AttendPrev Week`,opening_night)
+colnames(d)
+```
+
+
+```{r}
+d$`Week End`[d$`Week End`== "2020-03-08"] <- "2020-03-01"
+d
+```
+
+```{r}
+names(d)[names(d) == "GrossesPrev Week"] <- "Grosses"
+names(d)[names(d) == "AttendPrev Week"] <- "Attend"
+colnames(d)
+twmg <- bind_rows(c,d)
+twmg
+```
+
+
+```{r}
+all_grossing <- bind_rows(twpg,twmg)
+all_grossing 
+```
+
+I dont need the index numbers from the csv files so I removed them using this code
+```{r}
+all_grossing <- all_grossing %>% select(-(c(X1.x, X1.y))) %>% arrange(Show)
+```
+
+##	Tidy & Manipulate Data II 
+
+# MUTATE 
+
+With my newly formed and tidied data set I added a column for grosses per attendee. 
+
+```{r}
+all_grossing <- mutate(all_grossing, average_spend = Grosses/Attend)
+```
+
+```{r}
+all_grossing <- mutate(all_grossing, time_on_bw = difftime(`Week End`,opening_night, units = "weeks") %>% round(digits = 1))
+```
+
+
+
+##	Scan I 
+
+Scan the data for missing values, special values and obvious errors (i.e. inconsistencies). In this step, you should fulfil the minimum requirement #7. In addition to the R codes and outputs, explain your methodology (i.e. explain why you have chosen that methodology and the actions that you have taken to handle these values) and communicate your results clearly.
+
+
+```{r}
+colSums(is.na(all_grossing))
+```
+
+
+##	Scan II
+
+Scan the numeric data for outliers. In this step, you should fulfil the minimum requirement #8. In addition to the R codes and outputs, explain your methodology (i.e. explain why you have chosen that methodology and the actions that you have taken to handle these values) and communicate your results clearly.
+
+```{r}
+all_grossing$Grosses %>%  boxplot(main="Box Plot of weekly Grosses", ylab="Grosses", col = "grey")
+```
+```{r}
+hist(all_grossing$Grosses, breaks=30)
+```
+
+It is evident we have two outliers and that they have grosses above 2,000,000 
+
+```{r}
+all_grossing %>% filter(Grosses > 2000000)
+```
+Hamilton is our clear outlier. 
+
+Capping method for outliers 
+
+```{r}
+cap <- function(x,na.rm = TRUE){
+  quantiles <- quantile( x, c(.05, 0.25, 0.75, .95 ),na.rm = TRUE )
+  x[ x < quantiles[2] - 1.5*IQR(x,na.rm = TRUE) ] <- quantiles[1]
+  x[ x > quantiles[3] + 1.5*IQR(x,na.rm = TRUE) ] <- quantiles[4]
+  x
+}
+
+data$Grosses <- data$Grosses %>% cap(na.rm = TRUE)
+```
+
+
+## Attendance outliers 
+
+```{r}
+all_grossing$Attend %>%  boxplot(main="Box Plot of weekly Attendance", ylab="Attend", col = "grey")
+```
+
+
+
+
+##	Transform 
+
+I attempted a few different mathematical operations to try and achieve a spread of the data that somewhat mirrored normal distribution. My first few attempts were unsuccessful. The transformation that most closely achieved normality was the sqaure root trandsformation. 
+
+```{r}
+hist(data$Grosses, breaks = 10)
+```
+
+
+```{r}
+log_grosses <- log10(data$Grosses)
+
+hist(log_grosses, breaks = 15)
+```
+
+```{r}
+ln_grosses <- log(data$Grosses)
+
+hist(ln_grosses, breaks = 15)
+```
+
+```{r}
+sqrt_grosses <- sqrt(data$Grosses)
+hist(sqrt_grosses, breaks = 10)
+```
+
+Application of the scaling technique was used to change the scale for better understanding of the variable as the scale ofthe numbers is quite high. 
+
+```{r}
+scale_grosses <- scale(data$Grosses, center = FALSE, scale = TRUE)
+hist(scale_grosses)
+```
+
+
+I then loooked at the spread of the Attend variable 
+
+
+```{r}
+hist(data$Attend, breaks = 10)
+```
+
+I then also applied a transformation via mathematical operation to the "Attend" variable to see if that data would appear normally distributed 
+```{r}
+ln_attend <- log(data$Attend)
+
+hist(ln_attend, breaks = 10)
+```
+
+
+```{r}
+sqrt_attend <- sqrt(data$Attend)
+
+hist(sqrt_attend , breaks = 10)
+```
+
+
+
+
+
+
+<br>
+<br>
